@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Update cadence and signature-key rotation with delayed reveal (PROTOCOL.md 4, 4.1).
 
 use khensu_crypto::{Reader, write_vec};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! OpenMLS crypto provider for `MLS_256_MLKEM1024_AES256GCM_SHA512_MLDSA87`.
 //!
 //! Wraps the libcrux provider (which already does ML-KEM-1024 HPKE, AES-256-GCM

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Mailbox IDs (PROTOCOL.md 6.1).
 
 use khensu_crypto::sym::h256;

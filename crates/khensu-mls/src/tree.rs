@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Ratchet-tree delivery by content address (PROTOCOL.md 6.5).
 //!
 //! The Welcome carries a `TreeManifest`; the joiner fetches each 64 KiB chunk

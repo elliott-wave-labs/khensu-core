@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `KhensuContent` (PROTOCOL.md 5.1), the MLS application data.
 
 use khensu_crypto::{Reader, write_vec};

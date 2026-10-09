@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! ML-KEM-1024 (FIPS 203). Private keys are held as the 64-byte (d, z) seed.
 
 use libcrux_ml_kem::mlkem1024::{self, MlKem1024Ciphertext, MlKem1024PublicKey};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! ML-DSA-87 (FIPS 204), pure mode.
 //!
 //! Private keys are stored as the 32-byte key-generation seed, as in

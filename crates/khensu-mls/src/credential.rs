@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `KhensuCredential` (PROTOCOL.md 3.4): a pointer into the transparency log.
 
 use khensu_crypto::{Reader, write_vec};

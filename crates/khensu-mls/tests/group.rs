@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! End-to-end group lifecycle on the khensu suite: create, add with a Welcome
 //! that carries no tree, message, rotate signature key, reject the retired key,
 //! remove, and derive matching mailbox IDs.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Primitives for khensu.nu (PROTOCOL.md section 1).
 //!
 //! Every hash, KDF and signature is domain-separated with [`label`].

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Hashes, HKDF-SHA-512 and AES-256-GCM, all with khensu labels.
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};

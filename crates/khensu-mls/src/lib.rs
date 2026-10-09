@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The khensu.nu MLS profile (PROTOCOL.md section 4) on OpenMLS.
 
 pub mod content;

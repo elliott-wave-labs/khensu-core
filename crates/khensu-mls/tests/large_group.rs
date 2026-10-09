@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! TreeKEM at scale on the khensu suite. The default run uses 100 devices;
 //! `cargo test --release -- --ignored` runs the 1,000-device maximum.
 

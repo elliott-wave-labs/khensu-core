@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Splitting a serialized PrivateMessage into small-lane fragments (PROTOCOL.md 5.3).
 
 use std::collections::HashMap;
