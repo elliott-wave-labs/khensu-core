@@ -1,0 +1,22 @@
+[package]
+name = "khensu-crypto"
+description = "khensu.nu primitives: ML-KEM-1024, ML-DSA-87, labelled KDFs and signatures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libcrux-ml-dsa.workspace = true
+libcrux-ml-kem.workspace = true
+sha2.workspace = true
+sha3.workspace = true
+hkdf.workspace = true
+aes-gcm.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hex.workspace = true

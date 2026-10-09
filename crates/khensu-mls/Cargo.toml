@@ -1,0 +1,24 @@
+[package]
+name = "khensu-mls"
+description = "khensu.nu MLS profile: ML-KEM-1024 + ML-DSA-87 suite on OpenMLS, credentials, rotation, framing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+khensu-crypto.workspace = true
+openmls.workspace = true
+openmls_traits.workspace = true
+openmls_libcrux_crypto.workspace = true
+openmls_memory_storage.workspace = true
+# The libcrux provider only gets ML-KEM HPKE with this feature on.
+hpke-rs = { version = "0.7", features = ["draft-connolly-cfrg-hpke-mlkem"] }
+hpke-rs-libcrux = { version = "0.7", features = ["draft-connolly-cfrg-hpke-mlkem"] }
+tls_codec.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hex.workspace = true

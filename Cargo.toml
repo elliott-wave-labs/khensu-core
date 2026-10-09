@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/elliott-wave-labs/khensu-core"
+rust-version = "1.85"
+
+[workspace.dependencies]
+khensu-crypto = { path = "crates/khensu-crypto" }
+khensu-mls = { path = "crates/khensu-mls" }
+khensu-outfox = { path = "crates/khensu-outfox" }
+khensu-log = { path = "crates/khensu-log" }
+
+libcrux-ml-dsa = "0.0.11"
+libcrux-ml-kem = "0.0.11"
+openmls = { version = "0.9.1", features = ["draft-ietf-mls-pq-ciphersuites"] }
+openmls_traits = { version = "0.6.0", features = ["draft-ietf-mls-pq-ciphersuites"] }
+openmls_libcrux_crypto = { version = "0.4.0", features = ["draft-ietf-mls-pq-ciphersuites"] }
+openmls_memory_storage = { version = "0.6.0", features = ["draft-ietf-mls-pq-ciphersuites"] }
+tls_codec = { version = "0.5", features = ["derive", "serde", "mls"] }
+sha2 = "0.10"
+sha3 = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+aes = "0.8"
+aes-gcm = "0.10"
+ctr = "0.9"
+pbkdf2 = "0.12"
+bech32 = "0.11"
+rand = "0.8"
+getrandom = "0.2"
+zeroize = { version = "1.8", features = ["derive"] }
+thiserror = "2"
+hex = "0.4"
