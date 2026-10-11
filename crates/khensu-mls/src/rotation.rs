@@ -6,7 +6,7 @@ use khensu_crypto::{Reader, write_vec};
 use crate::Error;
 use crate::provider::MlDsaSigner;
 
-pub const UPDATE_INTERVAL_SECS: u64 = 24 * 3600;
+pub const UPDATE_INTERVAL_SECS: u64 = 5 * 60;
 pub const UPDATE_EVERY_MESSAGES: u32 = 1000;
 pub const REVEAL_DELAY_SECS: u64 = 7 * 24 * 3600;
 
