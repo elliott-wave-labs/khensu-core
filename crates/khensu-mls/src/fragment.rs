@@ -125,6 +125,53 @@ impl Reassembler {
     pub fn pending(&self) -> usize {
         self.pending.len()
     }
+
+    /// Serializes the partial sets, so fragments can be acknowledged as soon
+    /// as they are stored.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(self.pending.len() as u32).to_be_bytes());
+        for (msg_ref, p) in &self.pending {
+            out.extend_from_slice(msg_ref);
+            out.extend_from_slice(&p.first_seen.to_be_bytes());
+            out.push(p.count);
+            for part in &p.parts {
+                match part {
+                    Some(d) => {
+                        out.push(1);
+                        write_vec(&mut out, d);
+                    }
+                    None => out.push(0),
+                }
+            }
+        }
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        let mut r = Reader::new(bytes);
+        let n = r.u32()?;
+        let mut pending = HashMap::new();
+        for _ in 0..n {
+            let msg_ref: [u8; 16] = r.array()?;
+            let first_seen = r.u64()?;
+            let count = r.u8()?;
+            if !BUCKETS.contains(&count) {
+                return Err(Error::Decode);
+            }
+            let mut parts = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                parts.push(match r.u8()? {
+                    0 => None,
+                    1 => Some(r.vec()?.to_vec()),
+                    _ => return Err(Error::Decode),
+                });
+            }
+            pending.insert(msg_ref, Partial { first_seen, count, parts });
+        }
+        r.finish()?;
+        Ok(Self { pending })
+    }
 }
 
 #[cfg(test)]
@@ -164,5 +211,16 @@ mod tests {
         assert!(r.push(f, 0).unwrap().is_none());
         r.expire(REASSEMBLY_TTL_SECS);
         assert_eq!(r.pending(), 0);
+    }
+
+    #[test]
+    fn state_roundtrip() {
+        let msg = vec![9u8; 5000];
+        let mut frags = split(&msg).unwrap();
+        let mut r = Reassembler::default();
+        assert!(r.push(frags.remove(0), 5).unwrap().is_none());
+        let mut r = Reassembler::decode(&r.encode()).unwrap();
+        assert!(r.push(frags.remove(0), 6).unwrap().is_none());
+        assert_eq!(r.push(frags.remove(0), 7).unwrap().unwrap(), msg);
     }
 }

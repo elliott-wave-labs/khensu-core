@@ -1,0 +1,29 @@
+[package]
+name = "khensu-ffi"
+description = "khensu.nu client core for Swift: identity, MLS conversations, mix packets, ticks, encrypted state (UniFFI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "khensu_ffi"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+khensu-crypto.workspace = true
+khensu-mls.workspace = true
+khensu-outfox.workspace = true
+khensu-net.workspace = true
+openmls.workspace = true
+openmls_traits.workspace = true
+openmls_memory_storage.workspace = true
+tls_codec.workspace = true
+bech32.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+base64 = "0.22"
+uniffi = "0.32"

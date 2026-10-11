@@ -15,6 +15,7 @@ khensu-mls = { path = "crates/khensu-mls" }
 khensu-outfox = { path = "crates/khensu-outfox" }
 khensu-log = { path = "crates/khensu-log" }
 khensu-net = { path = "crates/khensu-net" }
+khensu-ffi = { path = "crates/khensu-ffi" }
 
 libcrux-ml-dsa = "0.0.11"
 libcrux-ml-kem = "0.0.11"

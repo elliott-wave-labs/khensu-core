@@ -1,0 +1,5 @@
+[bindings.swift]
+module_name = "KhensuCore"
+ffi_module_name = "KhensuCoreFFI"
+ffi_module_filename = "KhensuCoreFFI"
+generate_module_map = true

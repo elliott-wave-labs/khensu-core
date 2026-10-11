@@ -26,6 +26,7 @@ use crate::{Error, Result};
 pub const EXPORTER_LABEL: &[u8] = b"khensu camouflage v1";
 pub const EXPORTER_LEN: usize = 64;
 pub const HELLO_LEN: usize = 8 + kem::CIPHERTEXT_LEN + 32 + 32;
+pub const ACCEPT_LEN: usize = 32 + 2 + khensu_crypto::sig::SIGNATURE_LEN;
 /// Largest sealed frame on the wire, after the 4-byte length prefix.
 pub const MAX_SEALED_FRAME: usize = BULK_FRAME + 16;
 
@@ -110,7 +111,7 @@ pub fn accept(
     }
     let node_nonce: [u8; 32] = random()?;
     let sig = node_sig.sign("inner accept", &accept_tbs(hello, &node_nonce, exporter))?;
-    let mut out = Vec::with_capacity(32 + 4 + sig.0.len());
+    let mut out = Vec::with_capacity(ACCEPT_LEN);
     out.extend_from_slice(&node_nonce);
     write_vec(&mut out, &sig.0);
     let s = session(&ss, exporter, false);
@@ -187,6 +188,7 @@ mod tests {
         let (hs, hello) = ClientHandshake::start(kem.public(), &exporter, 100).unwrap();
         assert_eq!(hello.len(), HELLO_LEN);
         let (mut ns, accept_bytes) = accept(&kem, &sig, &exporter, &hello, 100).unwrap();
+        assert_eq!(accept_bytes.len(), ACCEPT_LEN);
         let mut cs = hs.finish(&accept_bytes, sig.public()).unwrap();
 
         let f = Frame::Subscribe { delivery_id: [5; 32] };

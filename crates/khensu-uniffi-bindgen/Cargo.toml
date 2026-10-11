@@ -1,0 +1,16 @@
+[package]
+name = "khensu-uniffi-bindgen"
+description = "Generates the Swift bindings for khensu-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+uniffi = { version = "0.32", features = ["cli"] }

@@ -8,6 +8,8 @@ Shared Rust core for khensu.nu: post-quantum primitives, the MLS profile, mixnet
 | `khensu-mls` | OpenMLS provider for `MLS_256_MLKEM1024_AES256GCM_SHA512_MLDSA87`, `KhensuCredential`, signature rotation with delayed reveal, mailbox IDs, fragment buckets, content-addressed ratchet trees |
 | `khensu-net` | Link layer without I/O: inner ML-KEM-1024/ML-DSA-87 handshake bound to the TLS exporter, fixed-size sealed frames, node directory and routes |
 | `khensu-outfox` | Mix packets: ML-KEM-1024 per hop, Lioness payloads, SURBs, replay filters, final payloads and mailbox requests ([README](crates/khensu-outfox/README.md), with the spec decisions) |
+| `khensu-ffi` | Client core for the apps through UniFFI: identity, 1:1 and group conversations, contact cards, tick scheduling with cover, mailbox fetches, encrypted state, link handshake ([Swift API](ffi/SWIFT-API.md)) |
+| `khensu-uniffi-bindgen` | The `uniffi-bindgen` binary used by `scripts/build-xcframework.sh` |
 
 Test vectors live in `vectors/`.
 
@@ -16,6 +18,7 @@ Test vectors live in `vectors/`.
 ```sh
 cargo test
 cargo test --release -p khensu-mls -- --ignored   # 1,000-device group
+./scripts/build-xcframework.sh                     # target/KhensuCore.xcframework, target/swift/
 ```
 
 OpenMLS 0.9.1 already defines our suite (codepoint `0x0906`); its libcrux backend does the ML-KEM-1024 HPKE but signs only with Ed25519, so `khensu-mls` wraps it and adds ML-DSA-87. No fork is needed. ML-KEM HPKE in `hpke-rs-libcrux` is behind the `draft-connolly-cfrg-hpke-mlkem` feature, which `khensu-mls` turns on.
