@@ -6,6 +6,7 @@ Shared Rust core for khensu.nu: post-quantum primitives, the MLS profile, mixnet
 | --- | --- |
 | `khensu-crypto` | ML-KEM-1024 and ML-DSA-87 (libcrux), labelled hashes, HKDF-SHA-512, AES-256-GCM, codec helpers |
 | `khensu-mls` | OpenMLS provider for `MLS_256_MLKEM1024_AES256GCM_SHA512_MLDSA87`, `KhensuCredential`, signature rotation with delayed reveal, mailbox IDs, fragment buckets, content-addressed ratchet trees |
+| `khensu-net` | Link layer without I/O: inner ML-KEM-1024/ML-DSA-87 handshake bound to the TLS exporter, fixed-size sealed frames, node directory and routes |
 | `khensu-outfox` | Mix packets: ML-KEM-1024 per hop, Lioness payloads, SURBs, replay filters, final payloads and mailbox requests ([README](crates/khensu-outfox/README.md), with the spec decisions) |
 
 Test vectors live in `vectors/`.

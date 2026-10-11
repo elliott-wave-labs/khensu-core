@@ -1,0 +1,24 @@
+[package]
+name = "khensu-net"
+description = "khensu.nu link layer without I/O: inner post-quantum handshake, sealed fixed-size frames, node directory and route selection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+khensu-crypto.workspace = true
+khensu-outfox.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+hex.workspace = true
+
+[dev-dependencies]
+rand_chacha = "0.3"
