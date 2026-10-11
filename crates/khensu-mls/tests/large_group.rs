@@ -45,7 +45,7 @@ fn run(n: usize) {
     let fetched = assemble(&manifest, |a| store.get(a).cloned()).unwrap();
     let tree_in = RatchetTreeIn::tls_deserialize_exact(&fetched).unwrap();
     let MlsMessageBodyIn::Welcome(welcome) =
-        MlsMessageIn::tls_deserialize_exact(&welcome.tls_serialize_detached().unwrap()).unwrap().extract()
+        MlsMessageIn::tls_deserialize_exact(welcome.tls_serialize_detached().unwrap()).unwrap().extract()
     else {
         panic!("not a welcome")
     };
@@ -59,7 +59,7 @@ fn run(n: usize) {
     let t = Instant::now();
     let (commit, _, _) = gl.self_update(pl, sl, LeafNodeParameters::default()).unwrap().into_messages();
     gl.merge_pending_commit(pl).unwrap();
-    let pm = MlsMessageIn::tls_deserialize_exact(&commit.tls_serialize_detached().unwrap())
+    let pm = MlsMessageIn::tls_deserialize_exact(commit.tls_serialize_detached().unwrap())
         .unwrap()
         .try_into_protocol_message()
         .unwrap();

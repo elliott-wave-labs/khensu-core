@@ -55,9 +55,21 @@ impl KemPublicKey {
     }
 
     pub fn encapsulate(&self) -> Result<(KemCiphertext, [u8; SHARED_SECRET_LEN])> {
+        Ok(self.encapsulate_derand(random()?))
+    }
+
+    /// FIPS 203 `Encaps_internal` with caller-supplied randomness `m`. The
+    /// randomness must be fresh from a CSPRNG except in test vectors.
+    pub fn encapsulate_derand(&self, m: [u8; 32]) -> (KemCiphertext, [u8; SHARED_SECRET_LEN]) {
         let pk = MlKem1024PublicKey::from(self.0);
-        let (ct, ss) = mlkem1024::encapsulate(&pk, random()?);
-        Ok((KemCiphertext(*ct.as_slice()), ss))
+        let (ct, ss) = mlkem1024::encapsulate(&pk, m);
+        (KemCiphertext(*ct.as_slice()), ss)
+    }
+}
+
+impl KemCiphertext {
+    pub fn from_slice(bytes: &[u8]) -> Result<Self> {
+        Ok(Self(bytes.try_into().map_err(|_| Error::Length)?))
     }
 }
 

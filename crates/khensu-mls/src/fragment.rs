@@ -9,8 +9,13 @@ use crate::Error;
 
 /// Payload bytes of one small mix packet.
 pub const SMALL_PAYLOAD: usize = 2048;
-/// Fixed data length inside each fragment: 16 (msg_ref) + 1 + 1 + varint(2) + data + padding = 2048.
-pub const FRAGMENT_DATA: usize = SMALL_PAYLOAD - 24;
+/// An encoded fragment travels as the `sealed` field of a small-lane mailbox
+/// `store`, whose framing takes 40 bytes of the payload (khensu-outfox
+/// `SMALL_STORE_MAX_SEALED`).
+pub const FRAGMENT_LEN: usize = SMALL_PAYLOAD - 40;
+/// Fixed data length inside each fragment: FRAGMENT_LEN minus msg_ref (16),
+/// index, count and the 2-byte length of `data`.
+pub const FRAGMENT_DATA: usize = FRAGMENT_LEN - 20;
 pub const BUCKETS: [u8; 4] = [3, 4, 6, 8];
 /// Incomplete sets are dropped after this long.
 pub const REASSEMBLY_TTL_SECS: u64 = 7 * 24 * 3600;
@@ -24,19 +29,19 @@ pub struct Fragment {
 }
 
 impl Fragment {
-    /// Encodes to exactly `SMALL_PAYLOAD` bytes.
+    /// Encodes to exactly `FRAGMENT_LEN` bytes.
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(SMALL_PAYLOAD);
+        let mut out = Vec::with_capacity(FRAGMENT_LEN);
         out.extend_from_slice(&self.msg_ref);
         out.push(self.index);
         out.push(self.count);
         write_vec(&mut out, &self.data);
-        out.resize(SMALL_PAYLOAD, 0);
+        debug_assert_eq!(out.len(), FRAGMENT_LEN);
         out
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
-        if bytes.len() != SMALL_PAYLOAD {
+        if bytes.len() != FRAGMENT_LEN {
             return Err(Error::Decode);
         }
         let mut r = Reader::new(bytes);
@@ -44,10 +49,8 @@ impl Fragment {
         let index = r.u8()?;
         let count = r.u8()?;
         let data = r.vec()?.to_vec();
+        r.finish()?;
         if !BUCKETS.contains(&count) || index >= count || data.len() != FRAGMENT_DATA {
-            return Err(Error::Decode);
-        }
-        if r.take(r.remaining())?.iter().any(|&b| b != 0) {
             return Err(Error::Decode);
         }
         Ok(Self { msg_ref, index, count, data })
@@ -147,7 +150,7 @@ mod tests {
         let mut out = None;
         for f in frags {
             let wire = f.encode();
-            assert_eq!(wire.len(), SMALL_PAYLOAD);
+            assert_eq!(wire.len(), FRAGMENT_LEN);
             out = r.push(Fragment::decode(&wire).unwrap(), 0).unwrap();
         }
         assert_eq!(out.unwrap(), msg);

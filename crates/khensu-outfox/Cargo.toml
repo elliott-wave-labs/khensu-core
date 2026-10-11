@@ -1,0 +1,24 @@
+[package]
+name = "khensu-outfox"
+description = "khensu.nu mix packets: Outfox-style layered headers with ML-KEM-1024 per hop, Lioness payloads, SURBs, replay filters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+khensu-crypto.workspace = true
+aes.workspace = true
+ctr.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+khensu-mls.workspace = true
+hex.workspace = true
+rand_chacha = "0.3"
+serde_json = "1"

@@ -9,7 +9,9 @@ use khensu_crypto::{Reader, write_vec};
 
 use crate::Error;
 
-pub const CHUNK_SIZE: usize = 64 * 1024;
+/// 64 KiB minus the `tree_put` / `tree_get` framing, so a chunk fits one bulk
+/// payload in both directions (khensu-outfox `TREE_CHUNK_MAX`).
+pub const CHUNK_SIZE: usize = 64 * 1024 - 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeManifest {

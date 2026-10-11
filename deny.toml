@@ -1,5 +1,16 @@
 [licenses]
-allow = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "CDLA-Permissive-2.0"]
+# MPL-2.0 is file-level copyleft and allowed by khensu-specs/LICENSING.md rule 4 (hpke-rs, uniffi).
+allow = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "CDLA-Permissive-2.0", "MPL-2.0"]
+
+[advisories]
+ignore = [
+    # libcrux-hmac-drbg 0.0.1 (via openmls_libcrux_crypto 0.4): panics only for single requests of a multiple of 64 KiB; OpenMLS draws far less. Drop when openmls_libcrux_crypto moves on.
+    { id = "RUSTSEC-2026-0329", reason = "unreachable request sizes; pinned by openmls_libcrux_crypto" },
+    # libcrux-kem 0.0.9 (via hpke-rs-libcrux 0.7): panics in hybrid X25519MLKEM768 / X-Wing paths; khensu uses only ML-KEM-1024.
+    { id = "RUSTSEC-2026-0330", reason = "hybrid KEMs never used" },
+    { id = "RUSTSEC-2026-0331", reason = "hybrid KEMs never used" },
+    { id = "RUSTSEC-2026-0173", reason = "unmaintained build-time proc-macro helper" },
+]
 
 [bans]
 deny = [{ name = "moqom-relay" }, { name = "moqom-recorder" }]
