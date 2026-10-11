@@ -132,7 +132,7 @@ impl Directory {
         serde_json::to_string_pretty(self).expect("serializable")
     }
 
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         let bad = |m: String| Err(Error::Directory(m));
         if self.version != 1 {
             return bad(format!("unsupported version {}", self.version));

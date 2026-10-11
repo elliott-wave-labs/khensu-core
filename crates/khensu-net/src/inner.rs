@@ -46,7 +46,7 @@ fn session(ss: &[u8; 32], exporter: &[u8; EXPORTER_LEN], client: bool) -> Sessio
     let c2n: [u8; 32] = kdf(ss, exporter, "inner c2n");
     let n2c: [u8; 32] = kdf(ss, exporter, "inner n2c");
     let (send, recv) = if client { (c2n, n2c) } else { (n2c, c2n) };
-    Session { send: Direction { key: send, counter: 0 }, recv: Direction { key: recv, counter: 0 } }
+    Session { send: Sealer(Direction { key: send, counter: 0 }), recv: Opener(Direction { key: recv, counter: 0 }) }
 }
 
 /// Client side, between sending `InnerHello` and receiving `InnerAccept`.
@@ -134,21 +134,13 @@ impl Direction {
     }
 }
 
-/// An established inner session.
-pub struct Session {
-    send: Direction,
-    recv: Direction,
-}
+/// The sending direction of a session.
+pub struct Sealer(Direction);
 
-impl Session {
+impl Sealer {
     pub fn seal(&mut self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let n = self.send.nonce()?;
-        Ok(seal(&self.send.key, &n, plaintext, &[]))
-    }
-
-    pub fn open(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
-        let n = self.recv.nonce()?;
-        open(&self.recv.key, &n, ciphertext, &[]).map_err(|_| Error::Decrypt)
+        let n = self.0.nonce()?;
+        Ok(seal(&self.0.key, &n, plaintext, &[]))
     }
 
     /// `uint32 length || sealed frame`, ready for the stream.
@@ -159,10 +151,49 @@ impl Session {
         out.extend_from_slice(&ct);
         Ok(out)
     }
+}
+
+/// The receiving direction of a session.
+pub struct Opener(Direction);
+
+impl Opener {
+    pub fn open(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        let n = self.0.nonce()?;
+        open(&self.0.key, &n, ciphertext, &[]).map_err(|_| Error::Decrypt)
+    }
 
     /// Opens one sealed frame (without its length prefix).
     pub fn open_frame(&mut self, sealed: &[u8]) -> Result<Frame> {
         Frame::decode(&self.open(sealed)?)
+    }
+}
+
+/// An established inner session.
+pub struct Session {
+    send: Sealer,
+    recv: Opener,
+}
+
+impl Session {
+    pub fn seal(&mut self, plaintext: &[u8]) -> Result<Vec<u8>> {
+        self.send.seal(plaintext)
+    }
+
+    pub fn open(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        self.recv.open(ciphertext)
+    }
+
+    pub fn seal_frame(&mut self, frame: &Frame) -> Result<Vec<u8>> {
+        self.send.seal_frame(frame)
+    }
+
+    pub fn open_frame(&mut self, sealed: &[u8]) -> Result<Frame> {
+        self.recv.open_frame(sealed)
+    }
+
+    /// Separate halves for a writer task and a reader task.
+    pub fn split(self) -> (Sealer, Opener) {
+        (self.send, self.recv)
     }
 }
 
