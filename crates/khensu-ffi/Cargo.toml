@@ -27,3 +27,5 @@ thiserror.workspace = true
 hex.workspace = true
 base64 = "0.22"
 uniffi = "0.32"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry"] }

@@ -7,6 +7,7 @@
 //! tag       = HMAC-SHA-512(KDF(ss, salt = outer_exporter, Label("inner hello tag")), fields above)[..32]
 //! signature = Sign(node_sig_sk, "inner accept", InnerHello || node_nonce || outer_exporter)
 //! c2n, n2c  = KDF(ss, salt = outer_exporter, Label("inner c2n") / Label("inner n2c"))
+//! binding   = KDF(ss, salt = outer_exporter, Label("inner binding"))      // channel binding for node authentication
 //! ```
 //!
 //! Sealed frames use AES-256-GCM with nonce `0^4 || uint64 counter`, one
@@ -46,7 +47,8 @@ fn session(ss: &[u8; 32], exporter: &[u8; EXPORTER_LEN], client: bool) -> Sessio
     let c2n: [u8; 32] = kdf(ss, exporter, "inner c2n");
     let n2c: [u8; 32] = kdf(ss, exporter, "inner n2c");
     let (send, recv) = if client { (c2n, n2c) } else { (n2c, c2n) };
-    Session { send: Sealer(Direction { key: send, counter: 0 }), recv: Opener(Direction { key: recv, counter: 0 }) }
+    let binding: [u8; 32] = kdf(ss, exporter, "inner binding");
+    Session { send: Sealer(Direction { key: send, counter: 0 }), recv: Opener(Direction { key: recv, counter: 0 }), binding }
 }
 
 /// Client side, between sending `InnerHello` and receiving `InnerAccept`.
@@ -172,6 +174,9 @@ impl Opener {
 pub struct Session {
     send: Sealer,
     recv: Opener,
+    /// A value both ends derive from the session and nobody else knows; what a
+    /// connecting node signs to prove its identity for this link (`Control::NodeAuth`).
+    pub binding: [u8; 32],
 }
 
 impl Session {

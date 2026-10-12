@@ -12,6 +12,8 @@ use khensu_mls::fragment::{Fragment, Reassembler, bucket_for, split};
 use khensu_mls::mailbox::{intro_mailbox, mailbox_id, mailbox_seed};
 use khensu_mls::tree::{TreeManifest, assemble, chunk_address, chunk_tree};
 use khensu_mls::{KhensuCredential, KhensuProvider, MlDsaSigner, SUITE, capabilities, create_config, join_config};
+use khensu_net::control::Control;
+use khensu_net::work::LoopBody;
 use khensu_net::{Directory, NodeEntry, Role};
 use khensu_outfox::delivery::{FinalPayload, MAX_FETCH_SURBS, MailboxOp, MailboxReply, MailboxRequest, ReplyBody, item_id};
 use khensu_outfox::epoch::DEVNET_GENESIS_TIME;
@@ -23,7 +25,8 @@ use rand::rngs::OsRng;
 
 use crate::identity::{Identity, display_address};
 use crate::wire::{ContactCard, Envelope, IntroBundle};
-use crate::{ClientEvent, ConversationInfo, KhensuError, MemberInfo, OutgoingPacket};
+use crate::{ClientEvent, ConversationInfo, KhensuError, MemberInfo, NetworkStatus, OutgoingPacket};
+use tracing::{debug, info, warn};
 
 const ZERO_NONCE: [u8; 12] = [0; 12];
 const SEEN_TTL_SECS: u64 = 30 * 24 * 3600;
@@ -56,6 +59,10 @@ pub(crate) struct PendingKp {
 pub(crate) enum SurbPurpose {
     Fetch([u8; 32]),
     TreeGet([u8; 32]),
+    /// A loop packet back to this client; the value is when it left, in ms.
+    Loop(u64),
+    /// A store receipt for an item put in this mailbox.
+    StoreReceipt([u8; 32]),
 }
 
 pub(crate) struct PendingSurb {
@@ -66,8 +73,13 @@ pub(crate) struct PendingSurb {
 
 #[derive(Clone)]
 pub(crate) enum Outgoing {
-    Request { rendezvous: [u8; 32], request: MailboxRequest },
+    /// A mailbox request for replica `replica` of the rendezvous mailbox
+    /// (an index into `Directory::mailboxes_for`, taken modulo its length).
+    /// `receipt` asks the replica for a store receipt (bulk lane).
+    Request { rendezvous: [u8; 32], request: MailboxRequest, replica: u8, receipt: bool },
     TreeGet([u8; 32]),
+    /// A loop through the mixes and back to this client (PROTOCOL.md 8.6).
+    Loop,
 }
 
 pub(crate) enum BlobPurpose {
@@ -101,6 +113,8 @@ pub(crate) struct Core {
     pub device_index: u16,
     pub delivery_id: [u8; 32],
     pub directory: Option<Arc<Directory>>,
+    /// The directory for the next epoch, once its header has been accepted.
+    pub next_directory: Option<Arc<Directory>>,
     pub gateway: Option<String>,
     pub groups: BTreeMap<Vec<u8>, Group>,
     pub key_packages: BTreeMap<Vec<u8>, PendingKp>,
@@ -115,6 +129,16 @@ pub(crate) struct Core {
     pub priority: VecDeque<[u8; 32]>,
     pub cursor: u64,
     pub ticks: u64,
+    /// Ask every replica for a store receipt on each store (costs a bulk slot).
+    pub store_receipts: bool,
+    /// Loops per 100 ticks; 0 sends none.
+    pub loop_rate: u32,
+    pub loops_sent: u64,
+    pub loops_returned: u64,
+    pub last_loop_rtt_ms: Option<u64>,
+    pub headers_accepted: u64,
+    pub receipts_ok: u64,
+    pub receipts_bad: u64,
 }
 
 fn secs(now_ms: u64) -> u64 {
@@ -135,6 +159,7 @@ impl Core {
             device_index: 0,
             delivery_id,
             directory: None,
+            next_directory: None,
             gateway: None,
             groups: BTreeMap::new(),
             key_packages: BTreeMap::new(),
@@ -149,6 +174,14 @@ impl Core {
             priority: VecDeque::new(),
             cursor: 0,
             ticks: 0,
+            store_receipts: false,
+            loop_rate: 0,
+            loops_sent: 0,
+            loops_returned: 0,
+            last_loop_rtt_ms: None,
+            headers_accepted: 0,
+            receipts_ok: 0,
+            receipts_bad: 0,
         })
     }
 
@@ -285,12 +318,26 @@ impl Core {
         self.queue_envelope(&Envelope::Chunked(manifest), mailbox_ids)
     }
 
+    fn replicas(&self) -> u8 {
+        self.directory.as_ref().map_or(1, |d| d.rules.mailbox_replicas.max(1))
+    }
+
+    /// Stores every fragment with every replica of each mailbox (12.4: the
+    /// replicas are the mailbox nodes closest to the mailbox ID).
     fn queue_envelope(&mut self, env: &Envelope, mailbox_ids: Vec<[u8; 32]>) -> Result<(), KhensuError> {
         let frags = split(&env.encode())?;
+        let replicas = self.replicas();
         for mbx in mailbox_ids {
             for f in &frags {
-                let request = MailboxRequest::new(mbx, MailboxOp::Store { sealed: f.encode(), surb: None });
-                self.small_out.push_back(Outgoing::Request { rendezvous: mbx, request });
+                for replica in 0..replicas {
+                    let request = MailboxRequest::new(mbx, MailboxOp::Store { sealed: f.encode(), surb: None });
+                    let o = Outgoing::Request { rendezvous: mbx, request, replica, receipt: self.store_receipts };
+                    if self.store_receipts {
+                        self.bulk_out.push_back(o);
+                    } else {
+                        self.small_out.push_back(o);
+                    }
+                }
             }
         }
         Ok(())
@@ -298,9 +345,12 @@ impl Core {
 
     fn put_blob(&mut self, bytes: &[u8]) -> TreeManifest {
         let (manifest, chunks) = chunk_tree(bytes);
+        let replicas = self.replicas();
         for (chunk, addr) in chunks.into_iter().zip(&manifest.chunk_hashes) {
-            let request = MailboxRequest::new(*addr, MailboxOp::TreePut { chunk });
-            self.bulk_out.push_back(Outgoing::Request { rendezvous: *addr, request });
+            for replica in 0..replicas {
+                let request = MailboxRequest::new(*addr, MailboxOp::TreePut { chunk: chunk.clone() });
+                self.bulk_out.push_back(Outgoing::Request { rendezvous: *addr, request, replica, receipt: false });
+            }
         }
         manifest
     }
@@ -399,10 +449,13 @@ impl Core {
     }
 
     fn flush_acks(&mut self) {
+        let replicas = self.replicas();
         for (mbx, ids) in std::mem::take(&mut self.acks) {
             for chunk in ids.chunks(ACK_BATCH) {
-                let request = MailboxRequest::new(mbx, MailboxOp::Ack { item_ids: chunk.to_vec() });
-                self.small_out.push_front(Outgoing::Request { rendezvous: mbx, request });
+                for replica in 0..replicas {
+                    let request = MailboxRequest::new(mbx, MailboxOp::Ack { item_ids: chunk.to_vec() });
+                    self.small_out.push_front(Outgoing::Request { rendezvous: mbx, request, replica, receipt: false });
+                }
             }
         }
     }
@@ -425,8 +478,16 @@ impl Core {
         self.bulk_out.extend(wanted.into_iter().map(Outgoing::TreeGet));
     }
 
-    fn packet(&self, dir: &Directory, gw: &NodeEntry, rendezvous: &[u8; 32], payload: &[u8], epoch: u64) -> Result<OutgoingPacket, KhensuError> {
-        let dest = dir.mailbox_for(rendezvous, epoch).ok_or(KhensuError::Network { msg: "no mailbox node".into() })?;
+    fn replica_node<'d>(&self, dir: &'d Directory, rendezvous: &[u8; 32], replica: u8, epoch: u64) -> Result<&'d NodeEntry, KhensuError> {
+        let replicas = dir.mailboxes_for(rendezvous, epoch);
+        if replicas.is_empty() {
+            return Err(KhensuError::Network { msg: "no mailbox node".into() });
+        }
+        Ok(replicas[replica as usize % replicas.len()])
+    }
+
+    fn packet(&self, dir: &Directory, gw: &NodeEntry, rendezvous: &[u8; 32], replica: u8, payload: &[u8], epoch: u64) -> Result<OutgoingPacket, KhensuError> {
+        let dest = self.replica_node(dir, rendezvous, replica, epoch)?;
         let route = dir.forward_route(&mut OsRng, gw, dest, epoch)?;
         let p = forward(&mut OsRng, &route, payload)?;
         Ok(OutgoingPacket { first_hop: gw.node_id.clone(), endpoint: gw.endpoint.clone(), bytes: p.to_bytes() })
@@ -434,7 +495,20 @@ impl Core {
 
     fn cover(&self, dir: &Directory, gw: &NodeEntry, lane: Lane, epoch: u64) -> Result<OutgoingPacket, KhensuError> {
         let r: [u8; 32] = random()?;
-        self.packet(dir, gw, &r, &FinalPayload::cover().encode(lane)?, epoch)
+        self.packet(dir, gw, &r, 0, &FinalPayload::cover().encode(lane)?, epoch)
+    }
+
+    /// A loop: a SURB over entry node, mixes, entry node, answered by this
+    /// client itself, so the packet comes back as a delivery (8.6).
+    fn loop_packet(&mut self, dir: &Directory, gw: &NodeEntry, lane: Lane, epoch: u64, now_ms: u64) -> Result<OutgoingPacket, KhensuError> {
+        let route = dir.client_loop_route(&mut OsRng, gw, epoch)?;
+        let (s, keys) = surb::create(&mut OsRng, &route, self.delivery_id, lane)?;
+        self.surbs.insert(keys.payload_key_ref, PendingSurb { keys, purpose: SurbPurpose::Loop(now_ms), epoch });
+        let body = LoopBody { nonce: random()?, sent_ms: now_ms, path: route.iter().map(|h| h.node_id).collect() };
+        let (_, p) = s.reply(body.to_payload(lane)?)?;
+        self.loops_sent += 1;
+        debug!(hops = route.len(), "loop.sent");
+        Ok(OutgoingPacket { first_hop: gw.node_id.clone(), endpoint: gw.endpoint.clone(), bytes: p.to_bytes() })
     }
 
     fn reply_surb(&mut self, dir: &Directory, gw: &NodeEntry, lane: Lane, purpose: SurbPurpose, epoch: u64) -> Result<khensu_outfox::Surb, KhensuError> {
@@ -444,29 +518,105 @@ impl Core {
         Ok(s)
     }
 
-    pub(crate) fn build(&mut self, dir: &Directory, gw: &NodeEntry, o: Outgoing, lane: Lane, epoch: u64) -> Result<OutgoingPacket, KhensuError> {
+    pub(crate) fn build(&mut self, dir: &Directory, gw: &NodeEntry, o: Outgoing, lane: Lane, epoch: u64, now_ms: u64) -> Result<OutgoingPacket, KhensuError> {
         match o {
-            Outgoing::Request { rendezvous, request } => self.packet(dir, gw, &rendezvous, &request.to_payload(lane)?, epoch),
+            Outgoing::Request { rendezvous, mut request, replica, receipt } => {
+                if receipt {
+                    if let MailboxOp::Store { surb, .. } = &mut request.op {
+                        // A receipt carries an ML-DSA-87 signature, so the answer needs the bulk lane.
+                        *surb = Some(self.reply_surb(dir, gw, Lane::Bulk, SurbPurpose::StoreReceipt(rendezvous), epoch)?);
+                    }
+                }
+                self.packet(dir, gw, &rendezvous, replica, &request.to_payload(lane)?, epoch)
+            }
             Outgoing::TreeGet(h) => {
                 let s = self.reply_surb(dir, gw, Lane::Bulk, SurbPurpose::TreeGet(h), epoch)?;
                 let req = MailboxRequest::new(h, MailboxOp::TreeGet { chunk_hash: h, surb: s });
-                self.packet(dir, gw, &h, &req.to_payload(Lane::Bulk)?, epoch)
+                let replica = (self.ticks / TREE_GET_RETRY_TICKS) as u8;
+                self.packet(dir, gw, &h, replica, &req.to_payload(Lane::Bulk)?, epoch)
             }
+            Outgoing::Loop => self.loop_packet(dir, gw, lane, epoch, now_ms),
         }
     }
 
+    /// Fetches take the replicas in turn, so an item stored with any of them is found.
     fn build_fetch(&mut self, dir: &Directory, gw: &NodeEntry, mbx: [u8; 32], epoch: u64) -> Result<OutgoingPacket, KhensuError> {
         let n = (dir.params.surbs_per_fetch as usize).clamp(1, MAX_FETCH_SURBS);
         let surbs = (0..n)
             .map(|_| self.reply_surb(dir, gw, Lane::Small, SurbPurpose::Fetch(mbx), epoch))
             .collect::<Result<Vec<_>, _>>()?;
         let req = MailboxRequest::new(mbx, MailboxOp::Fetch { max_items: n as u32, surbs });
-        self.packet(dir, gw, &mbx, &req.to_payload(Lane::Bulk)?, epoch)
+        let replica = (self.cursor % self.replicas().max(1) as u64) as u8;
+        self.packet(dir, gw, &mbx, replica, &req.to_payload(Lane::Bulk)?, epoch)
+    }
+
+    /// Moves to the next directory when its epoch has begun.
+    fn roll_directory(&mut self, now_ms: u64) {
+        let Some(next) = self.next_directory.as_ref() else { return };
+        if self.epoch(now_ms) >= next.epoch() {
+            let next = self.next_directory.take().expect("checked");
+            info!(epoch = next.epoch(), nodes = next.nodes.len(), "header.installed");
+            self.directory = Some(next);
+        }
+    }
+
+    /// A control message from the entry node: header bundles move the
+    /// directory on; anything else is ignored.
+    pub fn process_control(&mut self, message: &[u8], now_ms: u64) -> Result<Vec<ClientEvent>, KhensuError> {
+        let Ok(c) = Control::decode(message) else {
+            debug!("control.undecodable");
+            return Ok(Vec::new());
+        };
+        let Control::Header(bundle) = c else { return Ok(Vec::new()) };
+        let dir = self.dir()?;
+        let epoch = bundle.header.network_epoch;
+        if epoch <= dir.epoch() || self.next_directory.as_ref().is_some_and(|n| n.epoch() >= epoch) {
+            return Ok(Vec::new());
+        }
+        if epoch > dir.epoch() + 1 {
+            warn!(have = dir.epoch(), got = epoch, "header.ahead");
+            return Err(KhensuError::Network { msg: format!("header {epoch} is ahead of {}; ask for the chain", dir.epoch()) });
+        }
+        let next = dir.advance(bundle)?;
+        self.headers_accepted += 1;
+        info!(epoch, nodes = next.nodes.len(), committee = next.committee.len(), "header.accepted");
+        let ev = ClientEvent::HeaderAccepted { epoch, nodes: next.nodes.len() as u32, committee: next.committee.len() as u32 };
+        self.next_directory = Some(Arc::new(next));
+        self.roll_directory(now_ms);
+        Ok(vec![ev])
+    }
+
+    /// The control message asking the entry node for the headers after ours.
+    pub fn header_request(&self) -> Result<Vec<u8>, KhensuError> {
+        Ok(Control::HeaderRequest { have_epoch: self.dir()?.epoch() }.encode())
+    }
+
+    pub fn network_status(&self, now_ms: u64) -> NetworkStatus {
+        let dir = self.directory.as_ref();
+        NetworkStatus {
+            network: dir.map(|d| d.network.clone()).unwrap_or_default(),
+            epoch: self.epoch(now_ms),
+            header_epoch: dir.map_or(0, |d| d.epoch()),
+            next_header_epoch: self.next_directory.as_ref().map(|d| d.epoch()),
+            nodes: dir.map_or(0, |d| d.nodes.len() as u32),
+            committee: dir.map_or(0, |d| d.committee.len() as u32),
+            mailbox_replicas: self.replicas(),
+            gateway: dir.and_then(|d| self.gateway_entry(d).ok()).map(|g| g.name).unwrap_or_default(),
+            ticks: self.ticks,
+            pending: self.pending(),
+            loops_sent: self.loops_sent,
+            loops_returned: self.loops_returned,
+            last_loop_rtt_ms: self.last_loop_rtt_ms,
+            headers_accepted: self.headers_accepted,
+            store_receipts_ok: self.receipts_ok,
+            store_receipts_bad: self.receipts_bad,
+        }
     }
 
     /// One burst: a bulk packet (mailbox fetch, or a queued bulk request every
     /// other tick) and `small_per_tick - 1` small packets, cover when idle.
     pub fn tick(&mut self, now_ms: u64) -> Result<Vec<OutgoingPacket>, KhensuError> {
+        self.roll_directory(now_ms);
         let dir = self.dir()?;
         let gw = self.gateway_entry(&dir)?;
         let epoch = self.epoch(now_ms);
@@ -474,6 +624,9 @@ impl Core {
         self.ticks += 1;
         self.schedule_tree_gets();
         self.flush_acks();
+        if self.loop_rate > 0 && (self.ticks * self.loop_rate as u64) % 100 < self.loop_rate as u64 {
+            self.small_out.push_back(Outgoing::Loop);
+        }
 
         let mut out = Vec::new();
         let fetch = self.next_fetch(epoch);
@@ -483,7 +636,7 @@ impl Core {
                 if let Some(f) = f {
                     self.priority.push_front(f);
                 }
-                self.build(&dir, &gw, o, Lane::Bulk, epoch)?
+                self.build(&dir, &gw, o, Lane::Bulk, epoch, now_ms)?
             }
             (_, Some(f)) => self.build_fetch(&dir, &gw, f, epoch)?,
             (_, None) => self.cover(&dir, &gw, Lane::Bulk, epoch)?,
@@ -491,7 +644,7 @@ impl Core {
         out.push(bulk);
         for _ in 1..dir.params.small_per_tick.max(1) {
             let p = match self.small_out.pop_front() {
-                Some(o) => self.build(&dir, &gw, o, Lane::Small, epoch)?,
+                Some(o) => self.build(&dir, &gw, o, Lane::Small, epoch, now_ms)?,
                 None => self.cover(&dir, &gw, Lane::Small, epoch)?,
             };
             out.push(p);
@@ -510,7 +663,29 @@ impl Core {
         // Unknown references are the entry node's cover deliveries.
         let Some(ps) = self.surbs.remove(&r) else { return Ok(Vec::new()) };
         let Ok(plain) = ps.keys.open(payload) else { return Ok(Vec::new()) };
+        if let SurbPurpose::Loop(sent_ms) = ps.purpose {
+            let Some(body) = LoopBody::from_payload(&plain) else { return Ok(Vec::new()) };
+            let rtt = now_ms.saturating_sub(body.sent_ms.min(sent_ms));
+            self.loops_returned += 1;
+            self.last_loop_rtt_ms = Some(rtt);
+            debug!(rtt_ms = rtt, hops = body.path.len(), "loop.returned");
+            return Ok(vec![ClientEvent::LoopReturned { rtt_ms: rtt, hops: body.path.len() as u32 }]);
+        }
         let Ok(reply) = MailboxReply::decode(&plain) else { return Ok(Vec::new()) };
+        if let SurbPurpose::StoreReceipt(mbx) = ps.purpose {
+            let ReplyBody::Receipt(receipt) = reply.body else { return Ok(Vec::new()) };
+            let dir = self.dir()?;
+            let ok = dir.node(&receipt.replica_node_id).is_some_and(|n| receipt.verify(&n.sig_public()).is_ok())
+                && dir.mailboxes_for(&mbx, receipt.network_epoch).iter().any(|n| n.id() == receipt.replica_node_id);
+            if ok {
+                self.receipts_ok += 1;
+            } else {
+                self.receipts_bad += 1;
+            }
+            let replica = dir.node(&receipt.replica_node_id).map(|n| n.name.clone()).unwrap_or_else(|| hex::encode(&receipt.replica_node_id[..4]));
+            debug!(%replica, ok, "store_receipt.received");
+            return Ok(vec![ClientEvent::StoreReceipt { replica, epoch: receipt.network_epoch, valid: ok }]);
+        }
         match (ps.purpose, reply.body) {
             (SurbPurpose::Fetch(mbx), body) => {
                 if reply.more && !self.priority.contains(&mbx) {

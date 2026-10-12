@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use khensu_crypto::{KemPublicKey, SigPublicKey};
 use khensu_net::inner::{self, EXPORTER_LABEL, EXPORTER_LEN};
-use khensu_net::{ClientHandshake, Frame, Session};
+use khensu_net::{ClientHandshake, ControlAssembler, Frame, Session};
 use khensu_outfox::Lane;
 
 use crate::KhensuError;
@@ -69,7 +69,7 @@ impl LinkHandshake {
     /// Verifies the node's `InnerAccept` (without prefix). Single use.
     pub fn finish(&self, accept: Vec<u8>) -> Result<Arc<LinkSession>, KhensuError> {
         let hs = lock(&self.state).take().ok_or(KhensuError::State { msg: "handshake already finished".into() })?;
-        Ok(Arc::new(LinkSession { session: Mutex::new(hs.finish(&accept, &self.node_sig)?) }))
+        Ok(Arc::new(LinkSession { session: Mutex::new(hs.finish(&accept, &self.node_sig)?), assembler: Mutex::new(ControlAssembler::default()), next_msg_id: Mutex::new(1) }))
     }
 }
 
@@ -80,11 +80,17 @@ pub enum LinkFrame {
     Packet { bytes: Vec<u8> },
     Subscribe { delivery_id: Vec<u8> },
     Padding,
+    /// A whole control message (an epoch header bundle, for `KhensuClient::process_control`).
+    Control { message: Vec<u8> },
+    /// One part of a control message that is still arriving.
+    ControlPart,
 }
 
 #[derive(uniffi::Object)]
 pub struct LinkSession {
     session: Mutex<Session>,
+    assembler: Mutex<ControlAssembler>,
+    next_msg_id: Mutex<u32>,
 }
 
 impl LinkSession {
@@ -113,6 +119,17 @@ impl LinkSession {
         self.seal(&Frame::Padding(if bulk { Lane::Bulk } else { Lane::Small }))
     }
 
+    /// A control message (`KhensuClient::header_request`), sealed and
+    /// length-prefixed, one entry per frame to send in order.
+    pub fn seal_control(&self, message: Vec<u8>) -> Result<Vec<Vec<u8>>, KhensuError> {
+        let id = {
+            let mut n = lock(&self.next_msg_id);
+            *n = n.wrapping_add(1);
+            *n
+        };
+        Frame::control(id, &message).iter().map(|f| self.seal(f)).collect()
+    }
+
     /// Opens one sealed frame (the bytes after its length prefix), in stream order.
     pub fn open_frame(&self, sealed: Vec<u8>) -> Result<LinkFrame, KhensuError> {
         Ok(match lock(&self.session).open_frame(&sealed)? {
@@ -120,6 +137,10 @@ impl LinkSession {
             Frame::Packet(bytes) => LinkFrame::Packet { bytes },
             Frame::Subscribe { delivery_id } => LinkFrame::Subscribe { delivery_id: delivery_id.to_vec() },
             Frame::Padding(_) => LinkFrame::Padding,
+            Frame::Control(part) => match lock(&self.assembler).push(part) {
+                Some(message) => LinkFrame::Control { message },
+                None => LinkFrame::ControlPart,
+            },
         })
     }
 }

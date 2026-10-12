@@ -13,6 +13,7 @@ uniffi::setup_scaffolding!();
 mod core;
 mod identity;
 mod link;
+mod logging;
 mod state;
 mod wire;
 
@@ -23,6 +24,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use khensu_net::Directory;
 
 pub use link::{LinkFrame, LinkHandshake, LinkSession, link_exporter_label, link_frame_length};
+pub use logging::{LogLevel, LogSink, set_log_sink};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum KhensuError {
@@ -104,6 +106,29 @@ pub struct GatewayInfo {
     pub sig_public_key: Vec<u8>,
 }
 
+/// What the client knows about the network, for the network test screen.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct NetworkStatus {
+    pub network: String,
+    /// The epoch the clock says it is.
+    pub epoch: u64,
+    /// The epoch of the header the routes come from.
+    pub header_epoch: u64,
+    pub next_header_epoch: Option<u64>,
+    pub nodes: u32,
+    pub committee: u32,
+    pub mailbox_replicas: u8,
+    pub gateway: String,
+    pub ticks: u64,
+    pub pending: u32,
+    pub loops_sent: u64,
+    pub loops_returned: u64,
+    pub last_loop_rtt_ms: Option<u64>,
+    pub headers_accepted: u64,
+    pub store_receipts_ok: u64,
+    pub store_receipts_bad: u64,
+}
+
 #[derive(uniffi::Record, Clone, Debug)]
 pub struct OutgoingPacket {
     /// Hex node ID of the entry node; always the configured gateway.
@@ -139,6 +164,23 @@ pub enum ClientEvent {
     },
     RemovedFromConversation {
         conversation_id: String,
+    },
+    /// A loop packet came back through the mixes.
+    LoopReturned {
+        rtt_ms: u64,
+        hops: u32,
+    },
+    /// The entry node sent the next epoch header and it checked out.
+    HeaderAccepted {
+        epoch: u64,
+        nodes: u32,
+        committee: u32,
+    },
+    /// A mailbox replica signed for an item it stored.
+    StoreReceipt {
+        replica: String,
+        epoch: u64,
+        valid: bool,
     },
 }
 
@@ -281,7 +323,7 @@ impl KhensuClient {
         let new_bulk: Vec<_> = c.bulk_out.drain(bulk..).collect();
         let mut packets = Vec::new();
         for (o, lane) in new_bulk.into_iter().map(|o| (o, khensu_outfox::Lane::Bulk)).chain(new_small.into_iter().map(|o| (o, khensu_outfox::Lane::Small))) {
-            packets.push(c.build(&dir, &gw, o, lane, epoch)?);
+            packets.push(c.build(&dir, &gw, o, lane, epoch, now_ms)?);
         }
         Ok(EncryptedMessage { message_id: hex::encode(id), packets })
     }
@@ -296,6 +338,35 @@ impl KhensuClient {
     /// no events.
     pub fn process_incoming(&self, payload_key_ref: Vec<u8>, payload: Vec<u8>, now_ms: u64) -> Result<Vec<ClientEvent>, KhensuError> {
         self.core().process_incoming(&payload_key_ref, payload, now_ms)
+    }
+
+    /// A control message the entry node sent (`LinkFrame::Control`): epoch
+    /// headers move the directory on. Fails when the header is more than one
+    /// epoch ahead; send `header_request` then.
+    pub fn process_control(&self, message: Vec<u8>, now_ms: u64) -> Result<Vec<ClientEvent>, KhensuError> {
+        self.core().process_control(&message, now_ms)
+    }
+
+    /// The control message asking the entry node for the headers after the
+    /// one we have; send it with `LinkSession::seal_control`.
+    pub fn header_request(&self) -> Result<Vec<u8>, KhensuError> {
+        self.core().header_request()
+    }
+
+    pub fn network_status(&self, now_ms: u64) -> NetworkStatus {
+        self.core().network_status(now_ms)
+    }
+
+    /// Loop packets per 100 ticks (0 to 100); they take small slots that
+    /// would carry cover otherwise, and come back as `LoopReturned`.
+    pub fn set_loop_rate(&self, per_100_ticks: u32) {
+        self.core().loop_rate = per_100_ticks.min(100);
+    }
+
+    /// Ask every replica for a signed store receipt on each store. Costs a
+    /// bulk slot per fragment and replica; for tests and the network screen.
+    pub fn set_store_receipts(&self, on: bool) {
+        self.core().store_receipts = on;
     }
 
     /// Requests waiting in the outbox.

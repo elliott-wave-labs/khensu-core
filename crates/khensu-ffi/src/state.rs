@@ -20,7 +20,7 @@ use crate::core::{BlobPurpose, Core, Group, Held, Outgoing, PendingBlob, Pending
 use crate::identity::Identity;
 
 const MAGIC: &[u8; 4] = b"KHNS";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 const AAD: &[u8] = b"khensu state v1";
 
 fn bad(_: impl core::fmt::Debug) -> KhensuError {
@@ -37,22 +37,31 @@ fn put_u32(out: &mut Vec<u8>, n: usize) {
 
 fn put_outgoing(out: &mut Vec<u8>, o: &Outgoing) {
     match o {
-        Outgoing::Request { rendezvous, request } => {
+        Outgoing::Request { rendezvous, request, replica, receipt } => {
             out.push(1);
             out.extend_from_slice(rendezvous);
             write_vec(out, &request.encode());
+            out.push(*replica);
+            out.push(*receipt as u8);
         }
         Outgoing::TreeGet(h) => {
             out.push(2);
             out.extend_from_slice(h);
         }
+        Outgoing::Loop => out.push(3),
     }
 }
 
 fn get_outgoing(r: &mut Reader<'_>) -> Result<Outgoing, KhensuError> {
     Ok(match r.u8().map_err(bad)? {
-        1 => Outgoing::Request { rendezvous: r.array().map_err(bad)?, request: MailboxRequest::decode(r.vec().map_err(bad)?).map_err(bad)? },
+        1 => Outgoing::Request {
+            rendezvous: r.array().map_err(bad)?,
+            request: MailboxRequest::decode(r.vec().map_err(bad)?).map_err(bad)?,
+            replica: r.u8().map_err(bad)?,
+            receipt: r.u8().map_err(bad)? == 1,
+        },
         2 => Outgoing::TreeGet(r.array().map_err(bad)?),
+        3 => Outgoing::Loop,
         _ => return Err(bad(())),
     })
 }
@@ -102,6 +111,12 @@ pub fn export(core: &Core, key: &[u8]) -> Result<Vec<u8>, KhensuError> {
         let (t, h) = match p.purpose {
             SurbPurpose::Fetch(h) => (1, h),
             SurbPurpose::TreeGet(h) => (2, h),
+            SurbPurpose::Loop(sent_ms) => {
+                let mut h = [0u8; 32];
+                h[..8].copy_from_slice(&sent_ms.to_be_bytes());
+                (3, h)
+            }
+            SurbPurpose::StoreReceipt(h) => (4, h),
         };
         s.push(t);
         s.extend_from_slice(&h);
@@ -229,7 +244,13 @@ fn decode(plain: &[u8]) -> Result<Core, KhensuError> {
         let keys = SurbKeys::decode(r.vec().map_err(bad)?).map_err(bad)?;
         let t = r.u8().map_err(bad)?;
         let h = r.array().map_err(bad)?;
-        let purpose = if t == 1 { SurbPurpose::Fetch(h) } else { SurbPurpose::TreeGet(h) };
+        let purpose = match t {
+            1 => SurbPurpose::Fetch(h),
+            2 => SurbPurpose::TreeGet(h),
+            3 => SurbPurpose::Loop(u64::from_be_bytes(h[..8].try_into().expect("8 bytes"))),
+            4 => SurbPurpose::StoreReceipt(h),
+            _ => return Err(bad(())),
+        };
         let epoch = r.u64().map_err(bad)?;
         core.surbs.insert(keys.payload_key_ref, PendingSurb { keys, purpose, epoch });
     }

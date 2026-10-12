@@ -7,15 +7,26 @@
 //!   the outer TLS exporter) and the AES-256-GCM session it yields.
 //! - [`frame`]: fixed-size link frames, so padding, packets and deliveries look
 //!   alike once sealed.
-//! - [`directory`]: the node list (`devnet.json` for devnets) and route choice.
+//! - [`directory`]: the node list derived from the epoch header and its leases,
+//!   and route choice.
+//! - [`lease`], [`header`], [`work`]: leases, the rule set and epoch header,
+//!   receipts and measurement (PROTOCOL.md 12).
+//! - [`control`]: node-to-node and node-to-client control messages.
 
+pub mod control;
 pub mod directory;
 pub mod frame;
+pub mod header;
 pub mod inner;
+pub mod lease;
+pub mod work;
 
+pub use control::{Control, Item, Proposal};
 pub use directory::{Directory, NodeEntry, Params, Role};
-pub use frame::Frame;
+pub use frame::{ControlAssembler, Frame};
+pub use header::{EpochHeader, HeaderBundle, Rules};
 pub use inner::{ClientHandshake, Session};
+pub use lease::{Lease, LeaseMode};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
